@@ -9,8 +9,13 @@ import uuid
 
 from sqlalchemy import select
 from app.database import async_session
+# Import all models to resolve relationships
+from app.models.city import City
+from app.models.neighborhood import Neighborhood
+from app.models.person import Person
 from app.models.api_key import APIKey
 from app.models.subscription import Subscription
+from app.models.query_log import QueryLog
 
 
 def _truncate_key(key: str) -> bytes:
