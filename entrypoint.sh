@@ -28,15 +28,19 @@ MAX_RETRIES=30
 RETRY_COUNT=0
 
 until python -c "
-import sqlalchemy
-try:
-    engine = sqlalchemy.create_engine('${DATABASE_URL_SYNC}')
-    conn = engine.connect()
-    conn.close()
-    print('Database connected!')
-except Exception as e:
-    print(f'Connection error: {e}')
-    exit(1)
+import asyncio
+import asyncpg
+async def test():
+    url = '${DATABASE_URL_SYNC}'.replace('postgresql://', '')
+    # Parse: user:password@host:port/db
+    try:
+        conn = await asyncpg.connect('${DATABASE_URL_SYNC}')
+        await conn.close()
+        print('Database connected!')
+    except Exception as e:
+        print(f'Connection error: {e}')
+        exit(1)
+asyncio.run(test())
 " 2>/dev/null; do
   RETRY_COUNT=$((RETRY_COUNT + 1))
   if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
