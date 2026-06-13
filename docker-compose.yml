@@ -1,0 +1,83 @@
+# GenZ Colombia API - Docker Compose
+# Desarrollo local con PostgreSQL y API
+
+version: "3.8"
+
+services:
+  # Base de datos PostgreSQL (para desarrollo local)
+  # En producción, usar Supabase o PostgreSQL gestionado
+  db:
+    image: postgres:16-alpine
+    container_name: genz_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: genz_api
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - genz_network
+
+  # API FastAPI
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: genz_api
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/genz_api
+      DATABASE_URL_SYNC: postgresql://postgres:postgres@db:5432/genz_api
+      APP_NAME: "GenZ Colombia API"
+      APP_VERSION: "1.0.0"
+      DEBUG: "true"
+      ENVIRONMENT: "development"
+      RATE_LIMIT_FREE: "100/minute"
+      RATE_LIMIT_PRO: "1000/minute"
+      RATE_LIMIT_ENTERPRISE: "10000/minute"
+      CORS_ORIGINS: '["http://localhost:3000", "http://localhost:8000"]'
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - genz_network
+    command: >
+      sh -c "
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+
+  # Servicio para ejecutar seed data
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: genz_seed
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/genz_api
+      DATABASE_URL_SYNC: postgresql://postgres:postgres@db:5432/genz_api
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - genz_network
+    command: python -m scripts.seed_data
+    profiles:
+      - seed
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  genz_network:
+    driver: bridge

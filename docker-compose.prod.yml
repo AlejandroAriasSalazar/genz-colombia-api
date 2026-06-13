@@ -1,0 +1,32 @@
+# GenZ Colombia API - Docker Compose para Producción (Coolify)
+# PostgreSQL lo gestiona Coolify, no este compose
+
+version: "3.8"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: genz_api_prod
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
+      APP_NAME: ${APP_NAME:-GenZ Colombia API}
+      APP_VERSION: ${APP_VERSION:-1.0.0}
+      DEBUG: ${DEBUG:-false}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      SECRET_KEY: ${SECRET_KEY}
+      RATE_LIMIT_FREE: ${RATE_LIMIT_FREE:-100/minute}
+      RATE_LIMIT_PRO: ${RATE_LIMIT_PRO:-1000/minute}
+      RATE_LIMIT_ENTERPRISE: ${RATE_LIMIT_ENTERPRISE:-10000/minute}
+      CORS_ORIGINS: ${CORS_ORIGINS:-["https://api.databolico.com"]}
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
