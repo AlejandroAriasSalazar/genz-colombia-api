@@ -10,6 +10,15 @@ import time
 
 from app.config import settings
 from app.database import init_db, close_db
+
+# Import all models so SQLAlchemy can resolve relationships
+from app.models.city import City
+from app.models.neighborhood import Neighborhood
+from app.models.person import Person
+from app.models.api_key import APIKey
+from app.models.subscription import Subscription
+from app.models.query_log import QueryLog
+
 from app.api.routes import health, metadata, cities, neighborhoods, population, aggregate
 from app.api.middleware.auth import AuthMiddleware
 from app.api.middleware.rate_limit import limiter, rate_limit_exceeded_handler
@@ -20,6 +29,30 @@ async def lifespan(app: FastAPI):
     """Gestiona el ciclo de vida de la aplicación."""
     # Startup
     await init_db()
+
+    # Seed data if database is empty
+    from sqlalchemy import select
+    from app.database import async_session
+    from app.models.city import City as CityModel
+
+    async with async_session() as session:
+        result = await session.execute(select(CityModel))
+        cities = result.scalars().all()
+        if not cities:
+            print("No cities found - running seed data...")
+            import subprocess
+            import sys
+            result = subprocess.run(
+                [sys.executable, "-m", "scripts.seed_data"],
+                capture_output=True, text=True
+            )
+            if result.stdout:
+                print(result.stdout)
+            if result.stderr:
+                print("Seed STDERR:", result.stderr)
+        else:
+            print(f"Database has {len(cities)} cities - skipping seed")
+
     yield
     # Shutdown
     await close_db()
