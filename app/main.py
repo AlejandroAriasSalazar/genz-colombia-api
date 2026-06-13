@@ -28,9 +28,12 @@ from app.api.middleware.rate_limit import limiter, rate_limit_exceeded_handler
 async def lifespan(app: FastAPI):
     """Gestiona el ciclo de vida de la aplicación."""
     # Startup
-    await init_db()
+    # TEMPORAL: Drop and recreate to fix schema
+    # TODO: Use Alembic for migrations
+    from app.database import init_db, drop_and_recreate_db
+    await drop_and_recreate_db()
 
-    # Seed data if needed
+    # Seed data
     from sqlalchemy import select
     from app.database import async_session
     from app.models.city import City as CityModel
@@ -55,7 +58,7 @@ async def lifespan(app: FastAPI):
         else:
             print(f"Database has {len(cities)} cities - skipping city seed")
 
-        # Check and seed API keys (separate because previous seed might have failed)
+        # Check and seed API keys
         result = await session.execute(select(APIKeyModel))
         keys = result.scalars().all()
         if not keys:
@@ -75,6 +78,7 @@ async def lifespan(app: FastAPI):
 
     yield
     # Shutdown
+    from app.database import close_db
     await close_db()
 
 

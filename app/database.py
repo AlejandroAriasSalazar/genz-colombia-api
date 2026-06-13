@@ -48,6 +48,13 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
 
 
+async def drop_and_recreate_db():
+    """Elimina y recrea todas las tablas. SOLO PARA DESARROLLO/TESTING."""
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+
+
 async def close_db():
     """Cierra el engine de BD."""
     await engine.dispose()
