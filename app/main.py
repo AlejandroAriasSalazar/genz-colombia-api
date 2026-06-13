@@ -30,12 +30,14 @@ async def lifespan(app: FastAPI):
     # Startup
     await init_db()
 
-    # Seed data if database is empty
+    # Seed data if needed
     from sqlalchemy import select
     from app.database import async_session
     from app.models.city import City as CityModel
+    from app.models.api_key import APIKey as APIKeyModel
 
     async with async_session() as session:
+        # Check and seed cities/persons
         result = await session.execute(select(CityModel))
         cities = result.scalars().all()
         if not cities:
@@ -51,7 +53,25 @@ async def lifespan(app: FastAPI):
             if result.stderr:
                 print("Seed STDERR:", result.stderr)
         else:
-            print(f"Database has {len(cities)} cities - skipping seed")
+            print(f"Database has {len(cities)} cities - skipping city seed")
+
+        # Check and seed API keys (separate because previous seed might have failed)
+        result = await session.execute(select(APIKeyModel))
+        keys = result.scalars().all()
+        if not keys:
+            print("No API keys found - creating test keys...")
+            import subprocess
+            import sys
+            result = subprocess.run(
+                [sys.executable, "-m", "scripts.create_keys"],
+                capture_output=True, text=True
+            )
+            if result.stdout:
+                print(result.stdout)
+            if result.stderr:
+                print("CreateKeys STDERR:", result.stderr)
+        else:
+            print(f"Database has {len(keys)} API keys - skipping key creation")
 
     yield
     # Shutdown
