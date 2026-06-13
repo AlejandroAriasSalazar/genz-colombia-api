@@ -5,7 +5,7 @@ from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import APIKeyHeader
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from passlib.context import CryptContext
+import bcrypt
 from datetime import datetime
 import uuid
 
@@ -17,18 +17,23 @@ from app.models.query_log import QueryLog
 # Esquema de seguridad para API Key
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-# Contexto de hashing para API keys
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def _truncate_key(key: str) -> bytes:
+    """Trunca la clave a 72 bytes (límite de bcrypt)."""
+    return key.encode('utf-8')[:72]
 
 
 def hash_api_key(key: str) -> str:
     """Hashea una API key para almacenamiento seguro."""
-    return pwd_context.hash(key)
+    return bcrypt.hashpw(_truncate_key(key), bcrypt.gensalt()).decode('utf-8')
 
 
 def verify_api_key(plain_key: str, hashed_key: str) -> bool:
     """Verifica una API key contra su hash."""
-    return pwd_context.verify(plain_key, hashed_key)
+    try:
+        return bcrypt.checkpw(_truncate_key(plain_key), hashed_key.encode('utf-8'))
+    except Exception:
+        return False
 
 
 async def get_current_api_key(
