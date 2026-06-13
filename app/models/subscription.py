@@ -13,7 +13,7 @@ class Subscription(Base):
 
     __tablename__ = "subscriptions"
 
-    id = Column(String(32), primary_key=True, index=True)
+    id = Column(String(36), primary_key=True, index=True)
     api_key_hash = Column(String(128), ForeignKey("api_keys.key_hash"), nullable=False, unique=True)
     tier = Column(String(20), nullable=False, default="free")
     queries_per_minute = Column(Integer, nullable=False, default=100)
