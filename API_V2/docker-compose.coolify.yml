@@ -9,7 +9,7 @@ services:
       POSTGRES_HOST: supabase-db-cfaxtcgr4x6hwacdwkdtckhc
       POSTGRES_PORT: "5432"
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_PASSWORD_B64: ${POSTGRES_PASSWORD_B64:?POSTGRES_PASSWORD_B64 is required}
       POSTGRES_DB: genz_api
       POSTGRES_SCHEMA: api_v2
       REDIS_URL: redis://redis:6379/0
