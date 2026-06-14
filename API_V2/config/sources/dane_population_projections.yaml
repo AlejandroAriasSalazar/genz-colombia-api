@@ -1,0 +1,22 @@
+id: dane_population_projections_municipal_2018_2042
+name: Serie municipal de población por área, sexo y edad 2018-2042
+owner: Departamento Administrativo Nacional de Estadística (DANE)
+official_url: https://www.dane.gov.co/files/censo2018/proyecciones-de-poblacion/Municipal/PPED-AreaSexoEdadMun-2018-2042_VP.xlsx
+landing_page: https://www.dane.gov.co/index.php/estadisticas-por-tema/demografia-y-poblacion/proyecciones-de-poblacion
+license_name: Datos abiertos del Gobierno de Colombia
+connector: dane_xlsx
+refresh_frequency: Verificación semanal; publicación según actualización DANE
+reference_period: 2018-2042
+expected_schema:
+  sheet: PobMunicipalxÁreaSexoEdad
+  header_row: 9
+  dimensions:
+    - DP
+    - DPNOM
+    - MPIO
+    - DPMP
+    - AÑO
+    - ÁREA GEOGRÁFICA
+  measures:
+    - Hombres 0 años ... Hombres 100 años y más
+    - Mujeres 0 años ... Mujeres 100 años y más

@@ -1,0 +1,113 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["api"]
+    environment: &app_environment
+      ENVIRONMENT: production
+      POSTGRES_HOST: supabase-db-cfaxtcgr4x6hwacdwkdtckhc
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: genz_api
+      REDIS_URL: redis://redis:6379/0
+      API_KEY_PEPPER: ${API_KEY_PEPPER:?API_KEY_PEPPER is required}
+      SYNTHETIC_ID_SECRET: ${SYNTHETIC_ID_SECRET:?SYNTHETIC_ID_SECRET is required}
+      CORS_ORIGINS: ${CORS_ORIGINS:-["https://explorer.databolico.com"]}
+      RAW_STORAGE_PATH: /data/raw
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+    volumes:
+      - genz_v2_raw:/data/raw
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - coolify
+      - supabase
+      - internal
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v2/health/live')"
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=coolify
+      - traefik.http.routers.genz-api-v2-http.entrypoints=http
+      - traefik.http.routers.genz-api-v2-http.rule=Host(`api.databolico.com`)
+      - traefik.http.routers.genz-api-v2-http.middlewares=redirect-to-https
+      - traefik.http.routers.genz-api-v2-https.entrypoints=https
+      - traefik.http.routers.genz-api-v2-https.rule=Host(`api.databolico.com`)
+      - traefik.http.routers.genz-api-v2-https.tls=true
+      - traefik.http.routers.genz-api-v2-https.tls.certresolver=letsencrypt
+      - traefik.http.services.genz-api-v2.loadbalancer.server.port=8000
+      - traefik.http.routers.genz-api-v2-http.service=genz-api-v2
+      - traefik.http.routers.genz-api-v2-https.service=genz-api-v2
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["worker"]
+    environment: *app_environment
+    volumes:
+      - genz_v2_raw:/data/raw
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - supabase
+      - internal
+    restart: unless-stopped
+
+  bootstrap:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["bootstrap"]
+    environment:
+      <<: *app_environment
+      BOOTSTRAP_API_KEY: ${BOOTSTRAP_API_KEY:?BOOTSTRAP_API_KEY is required}
+    volumes:
+      - genz_v2_raw:/data/raw
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - supabase
+      - internal
+    restart: "no"
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - genz_v2_redis:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  genz_v2_raw:
+  genz_v2_redis:
+
+networks:
+  internal:
+  coolify:
+    external: true
+    name: coolify
+  supabase:
+    external: true
+    name: cfaxtcgr4x6hwacdwkdtckhc
