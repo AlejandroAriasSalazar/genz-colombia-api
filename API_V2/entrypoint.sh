@@ -6,7 +6,16 @@ if [ -z "${DATABASE_URL:-}" ] && [ -n "${POSTGRES_HOST:-}" ]; then
   export DATABASE_URL
 fi
 
-python - <<'PY'
+case "${1:-api}" in
+  api)
+    exec uvicorn app.main:app --host 0.0.0.0 --port 8000 \
+      --workers "${WEB_CONCURRENCY:-2}" --proxy-headers
+    ;;
+  worker)
+    exec python -m app.worker
+    ;;
+  bootstrap)
+    python - <<'PY'
 import os
 import time
 
@@ -22,17 +31,6 @@ for attempt in range(60):
             raise
         time.sleep(2)
 PY
-
-case "${1:-api}" in
-  api)
-    alembic upgrade head
-    exec uvicorn app.main:app --host 0.0.0.0 --port 8000 \
-      --workers "${WEB_CONCURRENCY:-2}" --proxy-headers
-    ;;
-  worker)
-    exec python -m app.worker
-    ;;
-  bootstrap)
     alembic upgrade head
     exec python -m scripts.bootstrap
     ;;
