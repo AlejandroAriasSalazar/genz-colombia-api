@@ -8,7 +8,7 @@ services:
       ENVIRONMENT: production
       POSTGRES_HOST: supabase-db-cfaxtcgr4x6hwacdwkdtckhc
       POSTGRES_PORT: "5432"
-      POSTGRES_USER: postgres
+      POSTGRES_USER: supabase_admin
       POSTGRES_PASSWORD_B64: ${POSTGRES_PASSWORD_B64:?POSTGRES_PASSWORD_B64 is required}
       POSTGRES_DB: genz_api
       POSTGRES_SCHEMA: api_v2
