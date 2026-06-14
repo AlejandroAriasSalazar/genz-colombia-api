@@ -2,7 +2,7 @@
 set -eu
 
 if [ -z "${DATABASE_URL:-}" ] && [ -n "${POSTGRES_HOST:-}" ]; then
-  DATABASE_URL="$(python -c 'import os, urllib.parse; print("postgresql+psycopg://%s:%s@%s:%s/%s" % (urllib.parse.quote(os.environ["POSTGRES_USER"], safe=""), urllib.parse.quote(os.environ["POSTGRES_PASSWORD"], safe=""), os.environ["POSTGRES_HOST"], os.environ.get("POSTGRES_PORT", "5432"), os.environ["POSTGRES_DB"]))')"
+  DATABASE_URL="$(python -c 'import os, urllib.parse; print("postgresql+psycopg://%s:%s@%s:%s/%s?%s" % (urllib.parse.quote(os.environ["POSTGRES_USER"], safe=""), urllib.parse.quote(os.environ["POSTGRES_PASSWORD"], safe=""), os.environ["POSTGRES_HOST"], os.environ.get("POSTGRES_PORT", "5432"), os.environ["POSTGRES_DB"], urllib.parse.urlencode({"options": "-csearch_path=" + os.environ.get("POSTGRES_SCHEMA", "api_v2")})))')"
   export DATABASE_URL
 fi
 
@@ -22,9 +22,14 @@ import time
 import psycopg
 
 url = os.environ["DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://", 1)
+schema = os.environ.get("POSTGRES_SCHEMA", "api_v2")
 for attempt in range(60):
     try:
-        with psycopg.connect(url, connect_timeout=5):
+        with psycopg.connect(url, connect_timeout=5, autocommit=True) as connection:
+            quoted_schema = connection.execute(
+                "SELECT pg_catalog.quote_ident(%s)", (schema,)
+            ).fetchone()[0]
+            connection.execute(f"CREATE SCHEMA IF NOT EXISTS {quoted_schema}")
             break
     except psycopg.OperationalError:
         if attempt == 59:
