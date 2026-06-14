@@ -9,6 +9,18 @@ def test_health_and_readiness(client):
     assert ready.json()["checks"]["published_dataset"] is True
 
 
+def test_bootstrap_status_is_protected(client):
+    hidden = client.get("/api/v2/health/bootstrap")
+    assert hidden.status_code == 404
+
+    visible = client.get(
+        "/api/v2/health/bootstrap",
+        headers={"X-Operations-Key": "test-operations-key"},
+    )
+    assert visible.status_code == 200
+    assert visible.json() == {"status": "pending", "phase": "not_started"}
+
+
 def test_public_catalog_is_traceable(client):
     metadata = client.get("/api/v2/metadata")
     assert metadata.status_code == 200

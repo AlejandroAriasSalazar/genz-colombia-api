@@ -15,29 +15,7 @@ case "${1:-api}" in
     exec python -m app.worker
     ;;
   bootstrap)
-    python - <<'PY'
-import os
-import time
-
-import psycopg
-
-url = os.environ["DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://", 1)
-schema = os.environ.get("POSTGRES_SCHEMA", "api_v2")
-for attempt in range(60):
-    try:
-        with psycopg.connect(url, connect_timeout=5, autocommit=True) as connection:
-            quoted_schema = connection.execute(
-                "SELECT pg_catalog.quote_ident(%s)", (schema,)
-            ).fetchone()[0]
-            connection.execute(f"CREATE SCHEMA IF NOT EXISTS {quoted_schema}")
-            break
-    except psycopg.OperationalError:
-        if attempt == 59:
-            raise
-        time.sleep(2)
-PY
-    alembic upgrade head
-    exec python -m scripts.bootstrap
+    exec python -m scripts.run_bootstrap
     ;;
   *)
     exec "$@"

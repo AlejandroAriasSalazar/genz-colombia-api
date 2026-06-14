@@ -1,6 +1,10 @@
+import hmac
+import json
+import os
 from contextlib import suppress
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -41,3 +45,17 @@ def readiness(
         required.append("published_dataset")
     ready = all(checks[name] for name in required)
     return {"status": "ready" if ready else "not_ready", "checks": checks}
+
+
+@router.get("/bootstrap", include_in_schema=False)
+def bootstrap_status(
+    x_operations_key: str | None = Header(default=None),
+    settings: Settings = Depends(get_settings),
+):
+    expected = os.environ.get("BOOTSTRAP_API_KEY", "")
+    if not expected or not x_operations_key or not hmac.compare_digest(expected, x_operations_key):
+        raise HTTPException(status_code=404)
+    path = Path(settings.raw_storage_path) / "bootstrap-status.json"
+    if not path.exists():
+        return {"status": "pending", "phase": "not_started"}
+    return json.loads(path.read_text())

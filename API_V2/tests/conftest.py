@@ -12,6 +12,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB}"
 os.environ["API_KEY_PEPPER"] = "test-pepper-with-sufficient-entropy"
 os.environ["SYNTHETIC_ID_SECRET"] = "test-id-secret-with-sufficient-entropy"
 os.environ["DEFAULT_REFERENCE_YEAR"] = "2026"
+os.environ["BOOTSTRAP_API_KEY"] = "test-operations-key"
 
 from app.core.config import get_settings
 from app.core.security import digest_api_key

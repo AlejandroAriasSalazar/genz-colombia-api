@@ -15,6 +15,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       API_KEY_PEPPER: ${API_KEY_PEPPER:?API_KEY_PEPPER is required}
       SYNTHETIC_ID_SECRET: ${SYNTHETIC_ID_SECRET:?SYNTHETIC_ID_SECRET is required}
+      BOOTSTRAP_API_KEY: ${BOOTSTRAP_API_KEY:?BOOTSTRAP_API_KEY is required}
       CORS_ORIGINS: ${CORS_ORIGINS:-["https://explorer.databolico.com"]}
       RAW_STORAGE_PATH: /data/raw
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
@@ -73,9 +74,7 @@ services:
       context: .
       dockerfile: Dockerfile
     command: ["bootstrap"]
-    environment:
-      <<: *app_environment
-      BOOTSTRAP_API_KEY: ${BOOTSTRAP_API_KEY:?BOOTSTRAP_API_KEY is required}
+    environment: *app_environment
     volumes:
       - genz_v2_raw:/data/raw
     depends_on:
