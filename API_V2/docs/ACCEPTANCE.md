@@ -17,7 +17,7 @@
 | Infraestructura | PostgreSQL y Redis pasan integración |
 | Recuperación | Backup restaurado y smoke test documentado |
 
-## Evidencia local del 13 de junio de 2026
+## Evidencia de producción del 14 de junio de 2026
 
 - Archivo DANE: `PPED-AreaSexoEdadMun-2018-2042_VP.xlsx`.
 - SHA-256:
@@ -25,9 +25,17 @@
 - Release: `dane-7e4616353156-m1`.
 - Celdas cargadas: 10.100.
 - Quality gate: `passed`.
-- Pruebas automatizadas: 22.
+- Base de datos: Supabase PostgreSQL, esquema aislado `api_v2`.
+- Pruebas automatizadas: 23.
 - Cobertura: 90,31%.
+- Dominio: `https://api.databolico.com`.
+- Liveness, PostgreSQL, Redis y release publicada: `ready`.
+- Autenticación sin clave: `401`.
+- Ciudades verificadas: Bogotá (`11001`) y Medellín (`05001`).
+- Muestra autenticada: reproducible, filtrada y con cuotas.
+- Agregación autenticada: 200 con grupos por sexo y población oficial.
+- Persistencia: reinicio de Coolify conservó una sola release publicada con
+  10.100 celdas, sin duplicados.
 
-La certificación final de producción requiere todavía ejecutar en el VPS la
-integración PostgreSQL/Redis, restaurar un backup y completar el smoke test del
-dominio público.
+La restauración periódica de backups sigue siendo un control operativo externo:
+debe programarse y probarse desde la política de backups del VPS/Supabase.

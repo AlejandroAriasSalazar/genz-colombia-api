@@ -22,13 +22,16 @@ el periodo 2018-2042*, actualización publicada el 8 de agosto de 2025.
 ```text
 DANE XLSX -> snapshot SHA-256 -> candidato -> quality gate -> release publicada
                                                         |
-                         FastAPI <- PostgreSQL <- celdas oficiales
+                         FastAPI <- Supabase PostgreSQL <- celdas oficiales
                               |
                     Redis quotas + audit log
 ```
 
 La API nunca consulta DANE durante una solicitud del cliente. Si DANE no está
 disponible, continúa sirviendo la última release aprobada.
+
+En producción, V2 usa un esquema `api_v2` aislado dentro de la base Supabase
+`genz_api`; V1 no se modifica.
 
 ## Inicio local
 
