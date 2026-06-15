@@ -1,295 +1,138 @@
-# GenZ Colombia API
+# GenZ Colombia API V3
 
-API privada de datos sintéticos de la **Generación Z colombiana** (jóvenes de 12 a 28 años), segmentada por ciudad, barrio/comuna/localidad y estrato socioeconómico.
+API de producción que parte de las proyecciones demográficas oficiales del DANE y
+añade una **capa de enriquecimiento de 52 variables** culturales, sociales y
+económicas (gustos musicales, programas de TV, poder adquisitivo, consumo cultural,
+tecnología, estilo de vida y psicografía) generadas con **síntesis de población
+rigurosa**: IPF anclado a marginales locales + cópula gaussiana condicional, con
+incertidumbre cuantificada y gate de validación.
 
-## Descripción
+V3 implementa la `Propuesta_Enriquecimiento_GenZ_API` (incluida en esta carpeta).
 
-Esta API expone datos **sintéticos** que preservan distribuciones marginales y correlaciones estadísticas basadas en fuentes oficiales colombianas:
+## Qué es real, qué es anclado y qué es modelado
 
-- **DANE**: Censo Nacional de Población y Vivienda (CNPV), Gran Encuesta Integrada de Hogares (GEIH), Encuesta Continua de Hogares (ECH), Proyecciones de población
-- **ICFES**: Resultados Saber 11 y Saber Pro
-- **MinTIC**: Encuesta de Tecnologías de la Información (ENTIC)
-- **Datos territoriales**: Datos Abiertos Bogotá, MEData Medellín, Área Metropolitana del Valle de Aburrá
+- **Tier 1 · Oficial (real):** municipio, sexo, edad, año. Celdas agregadas del DANE,
+  reconciliadas. Es la restricción dura: los totales no se alteran.
+- **Tier 2 · Anclado:** educación, estrato, etnia, vivienda, conectividad, bancarización.
+  Imputado con **IPF** a un marginal local verificable (Censo 2018 / MinTIC). Granularidad
+  municipal. Uso comercial libre con cita.
+- **Tier 3 · Modelado:** ingreso, consumo cultural, música, TV, tecnología, ocio. Aprendido
+  de encuestas (ECC/GEIH/ENTIC) vía **cópula/condicional**. Verdad **regional**; se entrega
+  con banda de confianza y NO se publica a municipal sin **validación externa**.
+- **Tier 4 · Señal (no incluido como microdato):** tendencias en vivo (qué suena/ve la
+  gente ahora) — capa efímera separada, "tendencia, no población".
 
-**Importante**: Los datos expuestos son SINTÉTICOS. No representan individuos reales.
+> **Estado de los datos:** el motor está completo y verificado, pero las distribuciones
+> condicionales actuales son **ILUSTRATIVAS** (calibradas a patrones plausibles de
+> Colombia). En producción se reemplazan por las estimadas de los microdatos reales con
+> sus factores de expansión, y cada variable Tier 3 pasa el gate de validación externa
+> antes de habilitarse a municipal. Ver `app/services/enrichment/seeds.py`.
 
-## Características
+## Mecanismo de enriquecimiento (4 capas)
 
-- Datos sintéticos con distribuciones realistas (estratos, edades, niveles educativos)
-- Segmentación geográfica: Bogotá (20 localidades) y Medellín (16 comunas)
-- Códigos DIVIPOLA oficiales
-- Autenticación por API key con tiers (free, pro, enterprise)
-- Rate limiting diferenciado por tier
-- Trazabilidad completa de consultas
-- Documentación OpenAPI 3.0 interactiva
-
-## Stack Tecnológico
-
-- **Backend**: Python 3.11+ / FastAPI
-- **Base de datos**: PostgreSQL (Supabase o local)
-- **ORM**: SQLAlchemy 2.0 (async)
-- **Autenticación**: API keys con bcrypt hashing
-- **Rate limiting**: slowapi
-- **Contenedores**: Docker + docker-compose
-
-## Inicio Rápido
-
-### 1. Clonar y configurar
-
-```bash
-cd genz-api
-cp .env.example .env
-# Editar .env con tus variables si es necesario
+```text
+Capa 0  Ancla oficial DANE (municipio×año×sexo×edad)  — totales = restricción dura
+Capa 1  IPF  -> variables Tier 2 ancladas a marginales locales (consistencia exacta)
+Capa 2  Cópula gaussiana + modelos condicionales -> distribución conjunta Tier 3
+Capa 3  Incertidumbre por variable + gate de validación (interna SRMSE/TAE + externa)
 ```
 
-### 2. Levantar con Docker Compose
+- **IPF** (`app/services/enrichment/ipf.py`): ajusta una semilla de asociación a los
+  marginales locales hasta que todos los márgenes coinciden. Garantiza consistencia con
+  los totales oficiales; no inventa correlaciones sin ancla.
+- **Cópula** (`copula.py`): cópula gaussiana (CDF normal e inversa sin scipy) que preserva
+  el co-movimiento entre variables Tier 3 (p. ej. ingreso↔streaming) condicionado al bloque
+  anclado.
+- **Reproducibilidad:** el bloque enriquecido deriva de la identidad estable HMAC más
+  `enrichment_model_version`. Misma seed + versión de dataset + versión de modelo ⇒ misma
+  persona multivariable, estable entre entornos.
+- **Incertidumbre:** cada atributo lleva `confidence`, `interval` y `truth_granularity`,
+  con penalización por transferencia al bajar de la granularidad de verdad a municipal.
+
+## Endpoints nuevos en V3
+
+Autenticados con `X-API-Key`:
+
+- `POST /api/v3/population/sample` — admite `"enrich": true` y `"enrich_domains": ["A".."F"]`.
+  Cada persona regresa con su bloque `enrichment` (requiere scope `enrich:read`, planes Pro/Enterprise).
+
+Públicos / catálogo:
+
+- `GET /api/v3/metadata` — incluye el resumen del enriquecimiento y el diccionario completo.
+- `GET /api/v3/enrichment/dictionary` — catálogo de las 52 variables (tier, fuente, granularidad, método, categorías).
+- `GET /api/v3/enrichment/model` — metadatos del modelo y estado de los datos.
+
+Con scope `enrich:read`:
+
+- `GET /api/v3/enrichment/validation` — reporte del gate (IPF SRMSE/TAE por zona,
+  reproducción de marginales, co-movimiento de la cópula, estado de validación externa).
+
+Todo lo demás de V2 (cities, departments, aggregate/query, market/*, report) se mantiene
+bajo el prefijo `/api/v3`.
+
+## Ejemplo
 
 ```bash
-# Levantar BD y API
-docker-compose up -d
-
-# Esperar a que los servicios estén listos
-docker-compose ps
-
-# Ejecutar seed data (puebla la BD)
-docker-compose run --rm seed
-```
-
-### 3. Acceder a la API
-
-- **API**: http://localhost:8000
-- **Documentación interactiva (Swagger)**: http://localhost:8000/docs
-- **Documentación ReDoc**: http://localhost:8000/redoc
-- **OpenAPI JSON**: http://localhost:8000/openapi.json
-
-### 4. Probar endpoints
-
-```bash
-# Health check (público)
-curl http://localhost:8000/health
-
-# Metadata (requiere API key)
-curl -H "X-API-Key: genz_free_test_key_12345" http://localhost:8000/metadata
-
-# Listar ciudades
-curl -H "X-API-Key: genz_free_test_key_12345" http://localhost:8000/cities
-
-# Muestreo de población
-curl -X POST http://localhost:8000/population/sample \
-  -H "X-API-Key: genz_free_test_key_12345" \
+curl -X POST http://localhost:8000/api/v3/population/sample \
   -H "Content-Type: application/json" \
-  -d '{"ciudad_divipola": "11001", "estrato": 3, "sample_size": 10}'
-
-# Agregación
-curl -X POST http://localhost:8000/aggregate/query \
-  -H "X-API-Key: genz_free_test_key_12345" \
-  -H "Content-Type: application/json" \
-  -d '{"group_by": ["ciudad_divipola", "estrato"], "metric": "count"}'
+  -H "X-API-Key: $GENZ_API_KEY" \
+  -d '{
+    "filters": {"municipality_code": "11001", "year": 2026, "age_min": 18, "age_max": 24},
+    "sample_size": 50,
+    "seed": 2026,
+    "enrich": true,
+    "enrich_domains": ["B", "C", "D"]
+  }'
 ```
 
-## API Keys de Prueba
+Cada persona incluirá, por ejemplo:
 
-Después de ejecutar el seed data, tendrás estas API keys disponibles:
+```json
+"enrichment": {
+  "music_genre_preference": {"value": "reggaeton", "tier": 3, "source": "ECC",
+     "truth_granularity": "regional", "method": "copula", "confidence": 0.574,
+     "p_value": 0.41, "interval": [0.17, 0.65]},
+  "household_income_decile": {"value": "5", "tier": 3, "method": "copula", "confidence": 0.574, ...},
+  "socioeconomic_stratum": {"value": "3", "tier": 2, "method": "IPF", "confidence": 0.9, ...}
+}
+```
 
-| Tier | API Key | Límites |
-|------|---------|---------|
-| Free | `genz_free_test_key_12345` | 100 req/min, 1000 req/día, muestra máx 100 |
-| Pro | `genz_pro_test_key_67890` | 1000 req/min, 10000 req/día, muestra máx 500 |
-| Enterprise | `genz_enterprise_test_key_abcde` | 10000 req/min, 100000 req/día, muestra máx 1000 |
+## Variables (52, por dominio)
 
-**Importante**: Estas keys son solo para desarrollo. En producción, genera keys seguras.
+- **A · Identidad sociodemográfica (10, Tier 2):** educación, asistencia escolar, etnia,
+  lengua materna, estrato, tenencia y tipo de vivienda, tamaño del hogar, migración, discapacidad.
+- **B · Poder adquisitivo (10):** decil de ingreso, poder adquisitivo, empleo, sector,
+  informalidad, bancarización, tarjeta de crédito, pagos digitales, gasto discrecional, ahorro.
+- **C · Consumo cultural (14):** gustos musicales, frecuencia, conciertos, cine, género de
+  cine/TV favorito, horas de TV, lectura, videojuegos, museos, teatro, festivales.
+- **D · Tecnología y vida digital (10):** smartphone, internet en hogar, frecuencia de uso,
+  red social principal, horas en redes, streaming video/música, e-commerce, dispositivos,
+  competencias digitales.
+- **E · Estilo de vida y movilidad (6):** deporte, modo de transporte, bicicleta, comer fuera,
+  vida nocturna, práctica religiosa.
+- **F · Psicografía (2):** segmento psicográfico, índice de adopción tecnológica.
 
-## Endpoints
+Catálogo completo y categorías en `GET /api/v3/enrichment/dictionary`.
 
-### Públicos (sin autenticación)
-
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| GET | `/health` | Health check básico |
-| GET | `/health/detailed` | Health check con estado de BD |
-
-### Autenticados (requieren `X-API-Key`)
-
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| GET | `/metadata` | Metadata del dataset (variables, fuentes, metodología) |
-| GET | `/schema` | Esquema de entidades y relaciones |
-| GET | `/cities` | Listar ciudades con códigos DIVIPOLA |
-| GET | `/cities/{divipola}` | Obtener ciudad por DIVIPOLA |
-| GET | `/neighborhoods?city={divipola}` | Listar barrios/comunas por ciudad |
-| POST | `/population/sample` | Muestreo de personas sintéticas con filtros |
-| POST | `/aggregate/query` | Consultas de agregación (sin microdatos) |
-
-### Filtros disponibles en `/population/sample`
-
-- `ciudad_divipola`: Código DIVIPOLA de la ciudad
-- `neighborhood_code`: Código de barrio/comuna/localidad
-- `estrato`: Estrato socioeconómico (1-6)
-- `edad_min`, `edad_max`: Rango de edad (12-28)
-- `sexo`: M o F
-- `nivel_educativo`: Nivel educativo
-- `ocupacion`: Ocupación
-- `acceso_internet`: Booleano
-- `interes_musical`: Género musical
-- `interes_tecnologico`: Área tecnológica
-- `uso_bicicleta`: Frecuencia de uso
-- `sample_size`: Tamaño de muestra (1-1000)
-
-### Métricas disponibles en `/aggregate/query`
-
-- `count`: Conteo de registros por grupo
-- `avg_edad`: Promedio de edad por grupo
-- `pct_internet`: Porcentaje con acceso a internet por grupo
-
-### Agrupaciones permitidas en `/aggregate/query`
-
-- `ciudad_divipola`
-- `neighborhood_code`
-- `estrato`
-- `sexo`
-- `nivel_educativo`
-- `ocupacion`
-- `interes_musical`
-- `interes_tecnologico`
-- `uso_bicicleta`
-
-## Modelo de Datos
-
-### Entidades
-
-- **cities**: Ciudades con códigos DIVIPOLA oficiales
-- **neighborhoods**: Barrios/comunas/localidades
-- **persons**: Personas sintéticas de la Gen Z
-- **api_keys**: API keys para autenticación
-- **subscriptions**: Suscripciones con tiers y límites
-- **query_logs**: Logs de consultas para trazabilidad
-
-### Variables de personas sintéticas
-
-- **Demográficas**: edad, sexo, estrato
-- **Geográficas**: ciudad_divipola, neighborhood_code
-- **Educativas**: nivel_educativo
-- **Ocupacionales**: ocupacion
-- **Conectividad**: acceso_internet
-- **Conductuales**: interes_musical, interes_tecnologico, uso_bicicleta
-
-### Distribuciones implementadas
-
-- **Estratos por ciudad**: Basados en ECV/GEIH del DANE
-- **Sexo**: 48% M, 52% F (proyecciones DANE)
-- **Edades**: Distribución con pico en 18-24 años
-- **Nivel educativo**: Condicional a edad y estrato
-- **Ocupación**: Condicional a edad y nivel educativo
-- **Acceso a internet**: Condicional a estrato (basado en ENTIC)
-
-## Desarrollo Local (sin Docker)
+## Verificación
 
 ```bash
-# Crear entorno virtual
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# venv\Scripts\activate  # Windows
-
-# Instalar dependencias
-pip install -r requirements.txt
-
-# Configurar BD PostgreSQL local
-# (o usar Supabase)
-
-# Ejecutar seed data
-python -m scripts.seed_data
-
-# Levantar API
-uvicorn app.main:app --reload
+make lint
+make test            # suite completa (requiere PostgreSQL/Redis en CI)
 ```
 
-## Tests
+Tests del motor de enriquecimiento en `tests/test_enrichment.py`: el IPF reproduce los
+marginales objetivo (SRMSE < 1e-3), la cópula preserva el co-movimiento ingreso↔consumo,
+el muestreo es reproducible por identidad, el diccionario tiene 52 variables y el gate pasa
+la validación interna pero **bloquea Tier 3 a municipal** sin fuente externa.
 
-```bash
-# Ejecutar tests
-pytest tests/ -v
+## Límites (heredados del análisis legal/metodológico)
 
-# Con cobertura
-pytest tests/ --cov=app --cov-report=html
-```
+- Las encuestas DANE (ECC/GEIH/ENTIC) se usan **solo como modelo de correlación**; no se
+  redistribuye su microdato.
+- Las variables Tier 3 son representativas a nivel regional; bajarlas a municipal exige
+  validación externa o se entregan como estimación regional explícita.
+- Cada variable entra por el quality gate con su fuente y tier, o no entra al microdato.
 
-## Despliegue
-
-### Railway
-
-```bash
-# Instalar CLI de Railway
-npm i -g @railway/cli
-
-# Login y deploy
-railway login
-railway init
-railway up
-```
-
-### Render
-
-1. Conectar repositorio en Render Dashboard
-2. Configurar build command: `pip install -r requirements.txt`
-3. Configurar start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-4. Agregar variables de entorno
-
-### VPS / Docker
-
-```bash
-# Build imagen
-docker build -t genz-api .
-
-# Run
-docker run -d -p 8000:8000 --env-file .env genz-api
-```
-
-## Variables de Entorno
-
-| Variable | Descripción | Default |
-|----------|-------------|---------|
-| `DATABASE_URL` | URL de conexión async a PostgreSQL | `postgresql+asyncpg://...` |
-| `DATABASE_URL_SYNC` | URL de conexión sync (para Alembic) | `postgresql://...` |
-| `APP_NAME` | Nombre de la aplicación | `GenZ Colombia API` |
-| `APP_VERSION` | Versión de la API | `1.0.0` |
-| `DEBUG` | Modo debug | `false` |
-| `ENVIRONMENT` | Entorno (development/production) | `development` |
-| `RATE_LIMIT_FREE` | Rate limit para tier free | `100/minute` |
-| `RATE_LIMIT_PRO` | Rate limit para tier pro | `1000/minute` |
-| `RATE_LIMIT_ENTERPRISE` | Rate limit para tier enterprise | `10000/minute` |
-| `CORS_ORIGINS` | Orígenes CORS permitidos (JSON) | `["http://localhost:3000"]` |
-
-## Metodología de Generación de Datos Sintéticos
-
-1. **Columna vertebral demográfica**: Primero se construyen las variables estructurales (edad, sexo, ciudad, barrio, estrato) con distribuciones calibradas según DANE.
-2. **Capa educativa y ocupacional**: Se generan condicionalmente a edad y estrato, preservando correlaciones reales.
-3. **Capa de conectividad y comportamiento**: Acceso a internet condicional a estrato (ENTIC), intereses musicales y tecnológicos con distribuciones de Gen Z.
-4. **Validación**: Se verifican distribuciones marginales y correlaciones bivariadas.
-
-## Guardas de Seguridad y Privacidad
-
-- **IDs sintéticos**: Los identificadores son hashes irreversibles, no hay IDs reales.
-- **Sin singling out**: No se permiten filtros hiper-específicos que aislen individuos.
-- **Rate limiting**: Protege contra scraping masivo.
-- **Trazabilidad**: Todas las consultas se registran en `query_logs`.
-- **Tiers de acceso**: Diferentes niveles de acceso según suscripción.
-
-## Fuentes y Referencias
-
-- [DANE - División Político-Administrativa (DIVIPOLA)](https://www.dane.gov.co)
-- [DANE - Proyecciones de Población](https://www.dane.gov.co/index.php/estadisticas-por-tema/demografia-y-poblacion/proyecciones-de-poblacion/)
-- [DANE - Encuesta de Calidad de Vida (ECV)](https://www.dane.gov.co/index.php/estadisticas-por-tema/pobreza-y-condiciones-de-vida/encuesta-de-calidad-de-vida-ecv/)
-- [MinTIC - ENTIC](https://www.mintic.gov.co/portal/715/w3-article-3224.html)
-- [ICFES - Datos Abiertos](https://www.icfes.gov.co/resultados)
-
-## Licencia
-
-Este proyecto es de uso interno para investigación. Los datos sintéticos generados no representan individuos reales.
-
-## Contacto
-
-Para consultas sobre la API o solicitudes de acceso, contacta al equipo de desarrollo.
-
----
-
-**Nota**: Esta API expone datos sintéticos con fines de investigación y análisis demográfico. No utilizar para tomar decisiones individuales sobre personas reales.
+Fuente demográfica base: DANE, *Serie municipal de población por área, sexo y edad
+2018-2042* (actualización 8 de agosto de 2025).

@@ -1,83 +1,74 @@
-# GenZ Colombia API - Docker Compose
-# Desarrollo local con PostgreSQL y API
-
-version: "3.8"
-
 services:
-  # Base de datos PostgreSQL (para desarrollo local)
-  # En producción, usar Supabase o PostgreSQL gestionado
-  db:
+  postgres:
     image: postgres:16-alpine
-    container_name: genz_db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: genz_api
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: genz_v3
+      POSTGRES_USER: genz
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U genz -d genz_v3"]
+      interval: 5s
       timeout: 5s
-      retries: 5
-    networks:
-      - genz_network
+      retries: 20
+    restart: unless-stopped
 
-  # API FastAPI
-  api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: genz_api
-    environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/genz_api
-      DATABASE_URL_SYNC: postgresql://postgres:postgres@db:5432/genz_api
-      APP_NAME: "GenZ Colombia API"
-      APP_VERSION: "1.0.0"
-      DEBUG: "true"
-      ENVIRONMENT: "development"
-      RATE_LIMIT_FREE: "100/minute"
-      RATE_LIMIT_PRO: "1000/minute"
-      RATE_LIMIT_ENTERPRISE: "10000/minute"
-      CORS_ORIGINS: '["http://localhost:3000", "http://localhost:8000"]'
-    ports:
-      - "8000:8000"
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
     volumes:
-      - .:/app
-    depends_on:
-      db:
-        condition: service_healthy
-    networks:
-      - genz_network
-    command: >
-      sh -c "
-        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-      "
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
 
-  # Servicio para ejecutar seed data
-  seed:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: genz_seed
-    environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/genz_api
-      DATABASE_URL_SYNC: postgresql://postgres:postgres@db:5432/genz_api
+  api:
+    build: .
+    environment: &app-environment
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+psycopg://genz:${POSTGRES_PASSWORD}@postgres:5432/genz_v3
+      REDIS_URL: redis://redis:6379/0
+      API_KEY_PEPPER: ${API_KEY_PEPPER:?API_KEY_PEPPER is required}
+      SYNTHETIC_ID_SECRET: ${SYNTHETIC_ID_SECRET:?SYNTHETIC_ID_SECRET is required}
+      CORS_ORIGINS: ${CORS_ORIGINS:-["https://explorer.databolico.com"]}
+      RAW_STORAGE_PATH: /data/raw
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+    # Puerto interno para que Coolify enrute el dominio del servicio api.
+    expose:
+      - "8000"
+    volumes:
+      - raw_data:/data/raw
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
-    networks:
-      - genz_network
-    command: python -m scripts.seed_data
-    profiles:
-      - seed
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v3/health/live')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["worker"]
+    environment: *app-environment
+    volumes:
+      - raw_data:/data/raw
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   postgres_data:
-    driver: local
-
-networks:
-  genz_network:
-    driver: bridge
+  redis_data:
+  raw_data:

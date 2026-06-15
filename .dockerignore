@@ -1,78 +1,29 @@
-# Python
+# Mantener la imagen liviana y reproducible
+.git/
+.gitignore
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual environments
-venv/
-env/
-ENV/
+*.pyc
+*.pyo
 .venv/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# Environment variables
-.env
-.env.local
-.env.production
-
-# Database
-*.db
-*.sqlite3
-
-# Logs
-*.log
-logs/
-
-# Testing
-tests/
+venv/
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
 .coverage
 htmlcov/
 
-# Docker (solo usamos docker-compose.prod.yml)
-docker-compose.yml
-docker-compose.override.yml
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Alembic
-alembic/versions/*.pyc
-
-# Documentation
-*.md
+# No incluir el frontend ni documentación en la imagen de la API
+frontend/
 docs/
+*.docx
+*.md
+DEPLOY_RUNBOOK.md
 
-# Git
-.git/
-.gitignore
-
-# Makefile
-Makefile
-
-# OpenCode config
-.opencode/
+# Datos locales y secretos
+*.db
+*.sqlite3
+.env
+.env.*
+!.env.example
+storage/raw/*
+!storage/raw/.gitkeep
