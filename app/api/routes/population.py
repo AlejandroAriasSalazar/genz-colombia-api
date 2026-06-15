@@ -1,114 +1,81 @@
-"""
-Endpoint de muestreo de población.
-Permite obtener muestras de personas sintéticas con filtros específicos.
-"""
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from fastapi import APIRouter, Depends, Request, Security
+from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_client
+from app.core.config import Settings, get_settings
+from app.core.errors import ProblemError
 from app.database import get_db
-from app.models.person import Person
-from app.schemas.query import PopulationSampleRequest, PopulationSampleResponse
+from app.models import ApiClient
+from app.schemas import AggregateRequest, AggregateResponse, SampleRequest, SampleResponse
+from app.services.enrichment import ENRICHMENT_MODEL_VERSION, enrich_person
+from app.services.query import aggregate_population, generate_sample, release_metadata
 
 router = APIRouter(tags=["Population"])
 
 
-@router.post(
-    "/population/sample",
-    summary="Muestreo de población sintética",
-    description="Retorna una muestra de personas sintéticas que cumplen con los filtros especificados.",
-    response_model=PopulationSampleResponse,
-    response_description="Muestra de personas sintéticas con filtros aplicados",
-)
-async def get_population_sample(
-    request: PopulationSampleRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Retorna una muestra aleatoria de personas sintéticas que cumplen con los filtros.
-
-    Filtros disponibles:
-        - ciudad_divipola: Código DIVIPOLA de la ciudad
-        - neighborhood_code: Código de barrio/comuna/localidad
-        - estrato: Estrato socioeconómico (1-6)
-        - edad_min: Edad mínima (12-28)
-        - edad_max: Edad máxima (12-28)
-        - sexo: Sexo (M o F)
-        - nivel_educativo: Nivel educativo
-        - ocupacion: Ocupación
-        - acceso_internet: Tiene acceso a internet
-        - interes_musical: Interés musical
-        - interes_tecnologico: Interés tecnológico
-        - uso_bicicleta: Frecuencia de uso de bicicleta
-        - sample_size: Tamaño de la muestra (1-1000, default 100)
-
-    Nota: Los datos son SINTÉTICOS. No representan individuos reales.
-    """
-    # Construir query con filtros
-    query = select(Person)
-
-    if request.ciudad_divipola:
-        query = query.where(Person.ciudad_divipola == request.ciudad_divipola)
-    if request.neighborhood_code:
-        query = query.where(Person.neighborhood_code == request.neighborhood_code)
-    if request.estrato:
-        query = query.where(Person.estrato == request.estrato)
-    if request.edad_min:
-        query = query.where(Person.edad >= request.edad_min)
-    if request.edad_max:
-        query = query.where(Person.edad <= request.edad_max)
-    if request.sexo:
-        query = query.where(Person.sexo == request.sexo)
-    if request.nivel_educativo:
-        query = query.where(Person.nivel_educativo == request.nivel_educativo)
-    if request.ocupacion:
-        query = query.where(Person.ocupacion == request.ocupacion)
-    if request.acceso_internet is not None:
-        query = query.where(Person.acceso_internet == request.acceso_internet)
-    if request.interes_musical:
-        query = query.where(Person.interes_musical == request.interes_musical)
-    if request.interes_tecnologico:
-        query = query.where(Person.interes_tecnologico == request.interes_tecnologico)
-    if request.uso_bicicleta:
-        query = query.where(Person.uso_bicicleta == request.uso_bicicleta)
-
-    # Contar total de registros que cumplen filtros
-    count_query = select(func.count()).select_from(query.subquery())
-    total_result = await db.execute(count_query)
-    total_matching = total_result.scalar()
-
-    # Aplicar límite de muestra
-    sample_size = min(request.sample_size or 100, 1000)
-    query = query.limit(sample_size)
-
-    # Ejecutar query
-    result = await db.execute(query)
-    persons = result.scalars().all()
-
-    # Construir filtros aplicados para respuesta
-    filters_applied = {
-        k: v for k, v in request.model_dump().items() if v is not None and k != "sample_size"
+def quota_headers(request: Request) -> dict[str, str]:
+    quota = request.state.quota
+    return {
+        "X-RateLimit-Minute-Remaining": str(quota.minute_remaining),
+        "X-RateLimit-Day-Remaining": str(quota.day_remaining),
     }
 
-    return PopulationSampleResponse(
+
+@router.post(
+    "/population/sample", response_model=SampleResponse, summary="Generate a reproducible synthetic sample"
+)
+def sample(
+    payload: SampleRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    client: ApiClient = Security(get_current_client, scopes=["sample:read"]),
+):
+    if payload.sample_size > client.max_sample_size:
+        raise ProblemError(
+            403,
+            "Sample limit exceeded",
+            f"This client may request at most {client.max_sample_size} records.",
+        )
+    enrichment_version = None
+    if payload.enrich and "enrich:read" not in client.scopes:
+        raise ProblemError(
+            403,
+            "Insufficient scope",
+            "Enrichment requires the 'enrich:read' scope (Pro/Enterprise plans).",
+        )
+    release, persons = generate_sample(db, settings, payload)
+    if payload.enrich:
+        enrichment_version = ENRICHMENT_MODEL_VERSION
+        domains = set(payload.enrich_domains) if payload.enrich_domains else None
+        for person in persons:
+            person["enrichment"] = enrich_person(person, domains)["attributes"]
+    return SampleResponse(
         count=len(persons),
-        total_matching=total_matching,
-        filters_applied=filters_applied,
-        persons=[
-            {
-                "id": p.id,
-                "edad": p.edad,
-                "sexo": p.sexo,
-                "ciudad_divipola": p.ciudad_divipola,
-                "neighborhood_code": p.neighborhood_code,
-                "estrato": p.estrato,
-                "nivel_educativo": p.nivel_educativo,
-                "ocupacion": p.ocupacion,
-                "acceso_internet": p.acceso_internet,
-                "interes_musical": p.interes_musical,
-                "interes_tecnologico": p.interes_tecnologico,
-                "uso_bicicleta": p.uso_bicicleta,
-            }
-            for p in persons
-        ],
+        seed=payload.seed,
+        filters_applied=payload.filters.model_dump(exclude_none=True),
+        dataset=release_metadata(release),
+        enrichment_model_version=enrichment_version,
+        persons=persons,
+    )
+
+
+@router.post(
+    "/aggregate/query", response_model=AggregateResponse, summary="Query official population aggregates"
+)
+def aggregate(
+    payload: AggregateRequest,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    _: ApiClient = Security(get_current_client, scopes=["aggregate:read"]),
+):
+    release, total, pagination, results = aggregate_population(db, settings, payload)
+    return AggregateResponse(
+        metric=payload.metric,
+        group_by=payload.group_by,
+        filters_applied=payload.filters.model_dump(exclude_none=True),
+        dataset=release_metadata(release),
+        total_population=total,
+        pagination=pagination,
+        results=results,
     )
