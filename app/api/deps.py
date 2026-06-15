@@ -1,102 +1,68 @@
-"""
-Dependencias de la API: autenticación, rate limiting, trazabilidad.
-"""
-from fastapi import Depends, HTTPException, status, Request
-from fastapi.security import APIKeyHeader
-from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import UTC, datetime
+
+from fastapi import Depends, Request, Security
+from fastapi.security import APIKeyHeader, APIKeyQuery, SecurityScopes
 from sqlalchemy import select
-import bcrypt
-from datetime import datetime
-import uuid
+from sqlalchemy.orm import Session
 
+from app.core.config import Settings, get_settings
+from app.core.errors import ProblemError
+from app.core.security import digest_api_key, parse_key_prefix, secure_digest_matches
 from app.database import get_db
-from app.models.api_key import APIKey
-from app.models.query_log import QueryLog
+from app.models import ApiClient
 
-
-# Esquema de seguridad para API Key
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+# A query-param key lets a browser open an authenticated report URL directly.
+api_key_query = APIKeyQuery(name="key", auto_error=False)
 
 
-def _truncate_key(key: str) -> bytes:
-    """Trunca la clave a 72 bytes (límite de bcrypt)."""
-    return key.encode('utf-8')[:72]
-
-
-def hash_api_key(key: str) -> str:
-    """Hashea una API key para almacenamiento seguro."""
-    return bcrypt.hashpw(_truncate_key(key), bcrypt.gensalt()).decode('utf-8')
-
-
-def verify_api_key(plain_key: str, hashed_key: str) -> bool:
-    """Verifica una API key contra su hash."""
-    try:
-        return bcrypt.checkpw(_truncate_key(plain_key), hashed_key.encode('utf-8'))
-    except Exception:
-        return False
-
-
-async def get_current_api_key(
+def _authenticate(
+    api_key: str | None,
+    required_scopes: list[str],
     request: Request,
-    api_key: str = Depends(api_key_header),
-    db: AsyncSession = Depends(get_db),
-) -> APIKey:
-    """
-    Valida la API key del header y retorna el objeto APIKey.
-    Lanza 401 si la key es inválida o inactiva.
-    """
+    db: Session,
+    settings: Settings,
+) -> ApiClient:
     if not api_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key requerida. Incluye el header X-API-Key.",
-        )
-
-    # Buscar todas las keys activas
-    result = await db.execute(select(APIKey).where(APIKey.is_active == True))
-    all_keys = result.scalars().all()
-
-    # Verificar cuál key coincide
-    matched_key = None
-    for key_obj in all_keys:
-        if verify_api_key(api_key, key_obj.key_hash):
-            matched_key = key_obj
-            break
-
-    if not matched_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key inválida o inactiva.",
-        )
-
-    # Actualizar last_used_at
-    matched_key.last_used_at = datetime.utcnow()
-    await db.commit()
-
-    # Guardar en request state para trazabilidad
-    request.state.api_key = matched_key
-    request.state.query_id = str(uuid.uuid4())
-
-    return matched_key
+        raise ProblemError(401, "Authentication required", "Provide a valid API key.")
+    prefix = parse_key_prefix(api_key)
+    if not prefix:
+        raise ProblemError(401, "Invalid API key", "The supplied API key is invalid.")
+    client = db.scalar(select(ApiClient).where(ApiClient.key_prefix == prefix, ApiClient.active.is_(True)))
+    candidate = digest_api_key(api_key, settings.api_key_pepper)
+    if client is None or not secure_digest_matches(candidate, client.key_digest):
+        raise ProblemError(401, "Invalid API key", "The supplied API key is invalid.")
+    missing_scopes = set(required_scopes) - set(client.scopes)
+    if missing_scopes:
+        raise ProblemError(403, "Insufficient scope", f"Missing required scopes: {sorted(missing_scopes)}")
+    quota = request.app.state.quota.consume(client.id, client.requests_per_minute, client.requests_per_day)
+    request.state.api_client_id = client.id
+    request.state.quota = quota
+    # Throttle the write: one update per minute is enough for usage tracking.
+    now = datetime.now(UTC)
+    last_used = client.last_used_at
+    if last_used is not None and last_used.tzinfo is None:
+        last_used = last_used.replace(tzinfo=UTC)
+    if last_used is None or (now - last_used).total_seconds() > 60:
+        client.last_used_at = now
+    return client
 
 
-async def log_query(
+def get_current_client(
+    security_scopes: SecurityScopes,
     request: Request,
-    response_status: int,
-    response_time_ms: int,
-    db: AsyncSession = Depends(get_db),
-):
-    """Registra la consulta en query_logs para trazabilidad."""
-    if not hasattr(request.state, "api_key"):
-        return
+    api_key: str | None = Security(api_key_header),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> ApiClient:
+    return _authenticate(api_key, security_scopes.scopes, request, db, settings)
 
-    query_log = QueryLog(
-        id=str(uuid.uuid4()),
-        api_key_hash=request.state.api_key.key_hash,
-        endpoint=request.url.path,
-        method=request.method,
-        query_params=str(dict(request.query_params)),
-        response_status=response_status,
-        response_time_ms=response_time_ms,
-    )
-    db.add(query_log)
-    await db.commit()
+
+def get_report_client(
+    request: Request,
+    header_key: str | None = Security(api_key_header),
+    query_key: str | None = Security(api_key_query),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> ApiClient:
+    return _authenticate(header_key or query_key, ["market:read"], request, db, settings)
