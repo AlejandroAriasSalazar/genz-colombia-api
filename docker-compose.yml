@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: genz_v3
       POSTGRES_USER: genz
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_PASSWORD: ${SERVICE_PASSWORD_POSTGRES}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -30,10 +30,10 @@ services:
     build: .
     environment: &app-environment
       ENVIRONMENT: production
-      DATABASE_URL: postgresql+psycopg://genz:${POSTGRES_PASSWORD}@postgres:5432/genz_v3
+      DATABASE_URL: postgresql+psycopg://genz:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/genz_v3
       REDIS_URL: redis://redis:6379/0
-      API_KEY_PEPPER: ${API_KEY_PEPPER:?API_KEY_PEPPER is required}
-      SYNTHETIC_ID_SECRET: ${SYNTHETIC_ID_SECRET:?SYNTHETIC_ID_SECRET is required}
+      API_KEY_PEPPER: ${SERVICE_BASE64_64_PEPPER}
+      SYNTHETIC_ID_SECRET: ${SERVICE_BASE64_64_SYNTH}
       CORS_ORIGINS: ${CORS_ORIGINS:-["https://explorer.databolico.com"]}
       RAW_STORAGE_PATH: /data/raw
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
