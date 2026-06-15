@@ -48,6 +48,10 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    # Endurecimiento: en producción no se expone la documentación interactiva ni el
+    # esquema OpenAPI (reduce el mapeo de la superficie de la API). En desarrollo/test
+    # siguen disponibles en /docs, /redoc y /openapi.json.
+    expose_docs = settings.environment != "production"
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
@@ -55,9 +59,9 @@ def create_app() -> FastAPI:
             "API versionada de población sintética Gen Z. Las personas se generan de forma "
             "reproducible a partir de agregados oficiales DANE; nunca representan individuos reales."
         ),
-        docs_url="/docs",
-        redoc_url="/redoc",
-        openapi_url="/openapi.json",
+        docs_url="/docs" if expose_docs else None,
+        redoc_url="/redoc" if expose_docs else None,
+        openapi_url="/openapi.json" if expose_docs else None,
         lifespan=lifespan,
     )
     app.add_middleware(
