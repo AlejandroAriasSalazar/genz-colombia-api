@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     # full interval first. Production normally loads a prebuilt artifact instead
     # (see scripts/build_dataset.py + `manage load-release`).
     worker_ingest_on_start: bool = False
+    # Heavy path switch. When False (default, the safe setting for the shared CCX13),
+    # the worker NEVER re-parses the 131 MB national XLSX; each cycle it just streams in
+    # the newest prebuilt artifact via COPY (a few MB of RAM, idempotent). Set
+    # WORKER_AUTO_INGEST=true only on a box with memory headroom to re-download and
+    # stream-parse the source on a schedule.
+    worker_auto_ingest: bool = False
     # Rows inserted per batch during ingestion. Keeps peak memory flat on small boxes;
     # the whole national file is streamed, never materialized at once. Override by env.
     ingest_batch_size: int = 5000
