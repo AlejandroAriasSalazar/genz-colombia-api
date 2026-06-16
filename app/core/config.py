@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     environment: Literal["development", "test", "production"] = "development"
     log_level: str = "INFO"
     database_url: str = "sqlite:///./genz_v3.db"
+    # Pool de SQLAlchemy (solo aplica a Postgres). Pequeño a propósito: el Postgres
+    # es compartido con Supabase/n8n, y con 2 workers de API + el worker no conviene
+    # abrir muchas conexiones. Override por env: DB_POOL_SIZE / DB_MAX_OVERFLOW.
+    db_pool_size: int = 5
+    db_max_overflow: int = 5
     redis_url: str | None = None
     api_key_pepper: str = "development-only-change-me"
     synthetic_id_secret: str = "development-only-change-me"
@@ -34,6 +39,18 @@ class Settings(BaseSettings):
     max_age: int = 100
     # Worker cadence for unattended re-ingestion (default weekly).
     ingestion_interval_seconds: int = 7 * 24 * 60 * 60
+    # A deploy/restart must NOT trigger the heavy national parse. The worker only
+    # re-ingests on boot when this is explicitly enabled; by default it sleeps the
+    # full interval first. Production normally loads a prebuilt artifact instead
+    # (see scripts/build_dataset.py + `manage load-release`).
+    worker_ingest_on_start: bool = False
+    # Rows inserted per batch during ingestion. Keeps peak memory flat on small boxes;
+    # the whole national file is streamed, never materialized at once. Override by env.
+    ingest_batch_size: int = 5000
+    # Where prebuilt, compact dataset releases live (cells.csv.gz + controls.csv.gz +
+    # release.json). Loaded in seconds via COPY; production never parses the 131 MB
+    # source XLSX. Built offline with scripts/build_dataset.py.
+    data_releases_path: Path = Path("data/releases")
     # Empty list = ingest every municipality in the DANE file (all of Colombia).
     # Provide explicit DIVIPOLA codes to restrict ingestion to a subset.
     target_municipalities: list[str] = Field(default_factory=list)
