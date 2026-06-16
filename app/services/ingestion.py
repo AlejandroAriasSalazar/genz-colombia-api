@@ -76,16 +76,8 @@ class DANEPopulationConnector:
                 response.headers.get("last-modified"),
             )
 
-    def parse(
-        self,
-        path: Path,
-        municipality_codes: set[str],
-        years: set[int] | None = None,
-    ) -> tuple[list[ParsedCell], dict]:
-        workbook = load_workbook(path, read_only=True, data_only=True)
-        if self.SHEET not in workbook.sheetnames:
-            raise ValueError(f"Required sheet {self.SHEET!r} is missing")
-        sheet = workbook[self.SHEET]
+    def _age_columns(self, sheet) -> list[tuple[int, str, int]]:
+        """Locate the (column index, sex, age) triples from the verified header row."""
         header = next(sheet.iter_rows(min_row=self.HEADER_ROW, max_row=self.HEADER_ROW, values_only=True))
         age_columns: list[tuple[int, str, int]] = []
         for index, value in enumerate(header):
@@ -101,48 +93,83 @@ class DANEPopulationConnector:
                 f"Expected {expected} sex-age columns for max_age={self.settings.max_age}, "
                 f"found {len(age_columns)}"
             )
+        return age_columns
 
-        # An empty target set means "every municipality in the file" (all of Colombia).
-        select_all = not municipality_codes
-        cells: list[ParsedCell] = []
-        control_totals: dict[tuple[str, int, str], dict] = {}
-        for row in sheet.iter_rows(min_row=self.HEADER_ROW + 1, values_only=True):
-            if row[2] is None:
-                continue
-            municipality_code = str(row[2]).zfill(5)
-            year = int(row[4])
-            area = str(row[5]).strip()
-            if area != "Total":
-                continue
-            if select_all:
-                # Defensive: skip department/national aggregate rows (codes ending in 000);
-                # real DIVIPOLA municipality codes never do.
-                if municipality_code.endswith("000"):
+    def iter_cells(
+        self,
+        path: Path,
+        municipality_codes: set[str],
+        years: set[int] | None = None,
+    ):
+        """Stream the source one source-row at a time.
+
+        Yields ``(row_cells, control_key, control_value)`` per accepted (municipality,
+        year) row, where ``row_cells`` is the list of sex×age :class:`ParsedCell` for
+        that row only. This keeps peak memory bounded to a single municipality-year
+        (~202 cells) instead of materializing the whole country (~5.6M cells at once),
+        which is what was OOM-killing the container on the shared VPS.
+        """
+        workbook = load_workbook(path, read_only=True, data_only=True)
+        try:
+            if self.SHEET not in workbook.sheetnames:
+                raise ValueError(f"Required sheet {self.SHEET!r} is missing")
+            sheet = workbook[self.SHEET]
+            age_columns = self._age_columns(sheet)
+            # An empty target set means "every municipality in the file" (all of Colombia).
+            select_all = not municipality_codes
+            for row in sheet.iter_rows(min_row=self.HEADER_ROW + 1, values_only=True):
+                if row[2] is None:
                     continue
-            elif municipality_code not in municipality_codes:
-                continue
-            if years is not None and year not in years:
-                continue
-            control_totals[(municipality_code, year, area)] = {
-                "total": int(row[6]),
-                "M": int(row[7]),
-                "F": int(row[8]),
-            }
-            for column, sex, age in age_columns:
-                cells.append(
+                municipality_code = str(row[2]).zfill(5)
+                year = int(row[4])
+                area = str(row[5]).strip()
+                if area != "Total":
+                    continue
+                if select_all:
+                    # Defensive: skip department/national aggregate rows (codes ending in 000);
+                    # real DIVIPOLA municipality codes never do.
+                    if municipality_code.endswith("000"):
+                        continue
+                elif municipality_code not in municipality_codes:
+                    continue
+                if years is not None and year not in years:
+                    continue
+                control_key = (municipality_code, year, area)
+                control_value = {"total": int(row[6]), "M": int(row[7]), "F": int(row[8])}
+                department_code = str(row[0]).zfill(2)
+                department_name = str(row[1]).strip()
+                municipality_name = str(row[3]).strip()
+                row_cells = [
                     ParsedCell(
-                        department_code=str(row[0]).zfill(2),
-                        department_name=str(row[1]).strip(),
+                        department_code=department_code,
+                        department_name=department_name,
                         municipality_code=municipality_code,
-                        municipality_name=str(row[3]).strip(),
+                        municipality_name=municipality_name,
                         year=year,
                         area=area,
                         sex=sex,
                         age=age,
                         population=int(row[column]),
                     )
-                )
-        workbook.close()
+                    for column, sex, age in age_columns
+                ]
+                yield row_cells, control_key, control_value
+        finally:
+            workbook.close()
+
+    def parse(
+        self,
+        path: Path,
+        municipality_codes: set[str],
+        years: set[int] | None = None,
+    ) -> tuple[list[ParsedCell], dict]:
+        """Eagerly materialize every cell. Convenience wrapper over :meth:`iter_cells`
+        for tests and small inputs; production ingestion streams via ``iter_cells``."""
+        cells: list[ParsedCell] = []
+        control_totals: dict[tuple[str, int, str], dict] = {}
+        for row_cells, control_key, control_value in self.iter_cells(path, municipality_codes, years):
+            cells.extend(row_cells)
+            control_totals[control_key] = control_value
         if not cells:
             raise ValueError("No rows matched the configured municipalities and years")
         return cells, control_totals
